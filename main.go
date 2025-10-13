@@ -4,9 +4,11 @@ import (
 	"database/sql"
 	"dl/handlers"
 	"dl/middleware"
+	"dl/repositories"
 	"dl/services"
 	"log"
 	"net/http"
+	"time"
 
 	_ "github.com/lib/pq"
 )
@@ -99,6 +101,18 @@ func main() {
 	mux.HandleFunc("/add-action", middleware.JWTAuth(ratingHandler.AddAction))
 	mux.HandleFunc("/user-actions", middleware.JWTAuth(ratingHandler.GetUserActions))
 	mux.HandleFunc("/leaderboard", middleware.JWTAuth(ratingHandler.GetLeaderboard))
+
+	newsRepo := repositories.NewNewsRepository(DB)
+	newsService := services.NewNewsService(newsRepo)
+	newsHandler := handlers.NewNewsHandler(newsService)
+
+	go func() {
+		for {
+			newsService.UpdateNews()
+			time.Sleep(30 * time.Minute)
+		}
+	}()
+	mux.HandleFunc("/news", newsHandler.GetAll)
 
 	handler := middleware.EnableCORS(mux)
 	http.ListenAndServe(":8080", handler)

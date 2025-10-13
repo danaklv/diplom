@@ -7,17 +7,17 @@ import (
 )
 
 type UserProfile struct {
-	ID             int64     `json:"id"`
-	Username       string    `json:"username"`
-	FirstName      string    `json:"first_name"`
-	LastName       string    `json:"last_name"`
-	Gender         string    `json:"gender"`
-	BirthDate      string    `json:"birth_date"`
-	Bio            string    `json:"bio"`
-	ProfilePicture string    `json:"profile_picture"`
-	Rating         int       `json:"rating"`
-	Email          string    `json:"email"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             int64          `json:"id"`
+	Username       string         `json:"username"`
+	FirstName      sql.NullString `json:"first_name"`
+	LastName       sql.NullString `json:"last_name"`
+	Gender         sql.NullString `json:"gender"`
+	BirthDate      sql.NullString `json:"birth_date"`
+	Bio            sql.NullString `json:"bio"`
+	ProfilePicture sql.NullString `json:"profile_picture"`
+	Rating         int            `json:"rating"`
+	Email          string         `json:"email"`
+	UpdatedAt      time.Time      `json:"updated_at"`
 }
 
 type ProfileService struct {
@@ -62,10 +62,8 @@ func (s *ProfileService) UpdateProfilePicture(userID int64, filePath string) err
 	return err
 }
 
-
 // Удаление профиля
 func (s *ProfileService) DeleteProfile(userID int64) error {
 	_, err := s.DB.Exec("DELETE FROM users WHERE id = $1", userID)
 	return err
 }
-

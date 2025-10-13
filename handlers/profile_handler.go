@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"dl/services"
 	"dl/utils"
 	"encoding/json"
@@ -8,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strconv"
 )
 
 type ProfileHandler struct {
@@ -16,22 +16,62 @@ type ProfileHandler struct {
 }
 
 // Получение профиля
+// func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
+
+// 	userID, err := utils.UserIDFromContext(r.Context())
+
+// 	fmt.Println("USERID = ", userID)
+// 	if err != nil {
+// 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+// 		return
+// 	}
+
+// 	profile, err := h.Service.GetProfile(userID)
+// 	fmt.Println(profile, err)
+// 	if err != nil {
+// 		http.Error(w, err.Error(), http.StatusNotFound)
+// 		return
+// 	}
+
+// 	json.NewEncoder(w).Encode(profile)
+// }
+
 func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
-	
-	idStr := r.URL.Query().Get("id")
-	if idStr == "" {
-		http.Error(w, "id is required", http.StatusBadRequest)
+	userID, err := utils.UserIDFromContext(r.Context())
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	id, _ := strconv.ParseInt(idStr, 10, 64)
 
-	profile, err := h.Service.GetProfile(id)
+	profile, err := h.Service.GetProfile(userID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
 
-	json.NewEncoder(w).Encode(profile)
+	// ✅ Преобразуем NullString → string
+	resp := map[string]interface{}{
+		"id":         profile.ID,
+		"username":   profile.Username,
+		"email":      profile.Email,
+		"first_name": nullToString(profile.FirstName),
+		"last_name":  nullToString(profile.LastName),
+		"gender":     nullToString(profile.Gender),
+		"birth_date": nullToString(profile.BirthDate),
+		"bio":        nullToString(profile.Bio),
+		"avatar":     nullToString(profile.ProfilePicture),
+		"rating":     profile.Rating,
+		"updated_at": profile.UpdatedAt,
+	}
+
+	json.NewEncoder(w).Encode(resp)
+}
+
+func nullToString(ns sql.NullString) string {
+	if ns.Valid {
+		return ns.String
+	}
+	return ""
 }
 
 // Обновление профиля
@@ -48,7 +88,6 @@ func (h *ProfileHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: получить userID из JWT (пока временно)
 	userID, err := utils.UserIDFromContext(r.Context())
 	fmt.Println("USERID = ", userID)
 	if err != nil {
