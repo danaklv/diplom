@@ -15,6 +15,15 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+type AuthServicer interface {
+	Register(username, email, password string) (string, string, error)
+	Login(email, password string) (string, string, error)
+	// VerifyEmail(code string) (string, string, error)
+	// ResendVerification(email string) error
+	// RequestPasswordReset(email string) error
+	// ResetPassword(token, newPassword string) error
+}
+
 type AuthService struct {
 	DB *sql.DB
 }
@@ -22,6 +31,7 @@ type AuthService struct {
 func NewAuthService(db *sql.DB) *AuthService {
 	return &AuthService{DB: db}
 }
+
 
 // --------------------------- REGISTER ---------------------------
 func (s *AuthService) Register(username, email, password string) (string, string, error) {

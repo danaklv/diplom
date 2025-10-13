@@ -3,12 +3,14 @@ package handlers
 import (
 	"dl/services"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 )
 
 type AuthHandler struct {
-	Service *services.AuthService
+	Service  *services.AuthService
+	Servicer services.AuthServicer
 }
 
 func respondJSON(w http.ResponseWriter, status int, data interface{}) {
@@ -38,6 +40,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	var req RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fmt.Println("err1 = ", err)
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request"})
 		return
 	}
@@ -48,6 +51,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	access, refresh, err := h.Service.Register(req.Username, req.Email, req.Password)
 	if err != nil {
+		fmt.Println("err2 = ", err)
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
