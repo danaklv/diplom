@@ -1,7 +1,8 @@
-package handlers
+package tests
 
 import (
 	"bytes"
+	"dl/handlers"
 	"dl/services"
 	"encoding/json"
 	"net/http"
@@ -16,7 +17,6 @@ func TestRegisterHandler(t *testing.T) {
 	db, mock, _ := sqlmock.New()
 	defer db.Close()
 
-	// скл запросы
 	mock.ExpectQuery("INSERT INTO users").
 		WithArgs("UserTest", "testemail@gmail.com", sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
@@ -26,7 +26,7 @@ func TestRegisterHandler(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	authService := &services.AuthService{DB: db}
-	handler := &AuthHandler{Service: authService}
+	handler := &handlers.AuthHandler{Service: authService}
 
 	body := map[string]string{
 		"username": "UserTest",
