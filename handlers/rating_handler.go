@@ -1,68 +1,92 @@
 package handlers
 
 import (
-	"dl/services"
-	"encoding/json"
-	"net/http"
+    "dl/services"
+    "dl/utils"
+    "encoding/json"
+    "net/http"
 )
 
 type RatingHandler struct {
-	Service *services.RatingService
+    Service *services.RatingService
 }
+
+
+
+// ------------------------ ADD ECO ACTION ------------------------
 
 func (h *RatingHandler) AddAction(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+    if r.Method != http.MethodPost {
+        jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+        return
+    }
 
-	var data struct {
-		ActionID int64 `json:"action_id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
-		return
-	}
+    var data struct {
+        ActionID int64 `json:"action_id"`
+    }
 
-	// TODO: userID из JWT
-	userID := int64(1)
+    if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+        jsonError(w, http.StatusBadRequest, "invalid JSON body")
+        return
+    }
 
-	if err := h.Service.AddEcoAction(userID, data.ActionID); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+    if data.ActionID == 0 {
+        jsonError(w, http.StatusBadRequest, "action_id is required")
+        return
+    }
 
-	json.NewEncoder(w).Encode(map[string]string{"message": "Action recorded successfully"})
+    userID, err := utils.UserIDFromContext(r.Context())
+    if err != nil {
+        jsonError(w, http.StatusUnauthorized, "unauthorized")
+        return
+    }
+
+    if err := h.Service.AddEcoAction(userID, data.ActionID); err != nil {
+        jsonError(w, http.StatusBadRequest, err.Error())
+        return
+    }
+
+    jsonResponse(w, http.StatusOK, map[string]string{
+        "message": "action recorded successfully",
+    })
 }
+
+// ------------------------ GET USER ACTION HISTORY ------------------------
+
 func (h *RatingHandler) GetUserActions(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+    if r.Method != http.MethodGet {
+        jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+        return
+    }
 
-	// TODO: userID из JWT
-	userID := int64(1)
+    userID, err := utils.UserIDFromContext(r.Context())
+    if err != nil {
+        jsonError(w, http.StatusUnauthorized, "unauthorized")
+        return
+    }
 
-	actions, err := h.Service.GetUserActions(userID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+    actions, err := h.Service.GetUserActions(userID)
+    if err != nil {
+        jsonError(w, http.StatusInternalServerError, err.Error())
+        return
+    }
 
-	json.NewEncoder(w).Encode(actions)
+    jsonResponse(w, http.StatusOK, actions)
 }
+
+// ------------------------ GET LEADERBOARD ------------------------
 
 func (h *RatingHandler) GetLeaderboard(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+    if r.Method != http.MethodGet {
+        jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+        return
+    }
 
-	leaderboard, err := h.Service.GetLeaderboard(10)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+    leaderboard, err := h.Service.GetLeaderboard(10)
+    if err != nil {
+        jsonError(w, http.StatusInternalServerError, err.Error())
+        return
+    }
 
-	json.NewEncoder(w).Encode(leaderboard)
+    jsonResponse(w, http.StatusOK, leaderboard)
 }

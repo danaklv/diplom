@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"dl/models"
 	"dl/services"
 	"dl/utils"
 	"encoding/json"
@@ -15,67 +16,60 @@ type ProfileHandler struct {
 	Service *services.ProfileService
 }
 
-// Получение профиля
-// func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
+func nullStr(v sql.NullString) string {
+	if v.Valid {
+		return v.String
+	}
+	return ""
+}
 
-// 	userID, err := utils.UserIDFromContext(r.Context())
-
-// 	fmt.Println("USERID = ", userID)
-// 	if err != nil {
-// 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-// 		return
-// 	}
-
-// 	profile, err := h.Service.GetProfile(userID)
-// 	fmt.Println(profile, err)
-// 	if err != nil {
-// 		http.Error(w, err.Error(), http.StatusNotFound)
-// 		return
-// 	}
-
-// 	json.NewEncoder(w).Encode(profile)
-// }
+// ------------------------ GET PROFILE ------------------------
 
 func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
 	userID, err := utils.UserIDFromContext(r.Context())
 	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		jsonError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
 	profile, err := h.Service.GetProfile(userID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		jsonError(w, http.StatusNotFound, err.Error())
 		return
 	}
 
-	// ✅ Преобразуем NullString → string
-	resp := map[string]interface{}{
-		"id":         profile.ID,
-		"username":   profile.Username,
-		"email":      profile.Email,
-		"first_name": nullToString(profile.FirstName),
-		"last_name":  nullToString(profile.LastName),
-		"gender":     nullToString(profile.Gender),
-		"birth_date": nullToString(profile.BirthDate),
-		"bio":        nullToString(profile.Bio),
-		"avatar":     nullToString(profile.ProfilePicture),
-		"rating":     profile.Rating,
-		"updated_at": profile.UpdatedAt,
+	resp := models.ProfileResponse{
+		ID:        profile.ID,
+		Username:  profile.Username,
+		Email:     profile.Email,
+		FirstName: nullStr(profile.FirstName),
+		LastName:  nullStr(profile.LastName),
+		Gender:    nullStr(profile.Gender),
+		BirthDate: nullStr(profile.BirthDate),
+		Bio:       nullStr(profile.Bio),
+		Avatar:    nullStr(profile.ProfilePicture),
+		Rating:    profile.Rating,
+		Level:     profile.Level,  // если добавишь в модель
+		League:    profile.League, // если добавишь в модель
+		UpdatedAt: profile.UpdatedAt,
 	}
 
-	json.NewEncoder(w).Encode(resp)
+	jsonResponse(w, http.StatusOK, resp)
 }
 
-func nullToString(ns sql.NullString) string {
-	if ns.Valid {
-		return ns.String
-	}
-	return ""
-}
+// ------------------------ UPDATE PROFILE ------------------------
 
-// Обновление профиля
 func (h *ProfileHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
 	var data struct {
 		FirstName string `json:"first_name"`
 		LastName  string `json:"last_name"`
@@ -83,91 +77,110 @@ func (h *ProfileHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		Bio       string `json:"bio"`
 		BirthDate string `json:"birth_date"`
 	}
+
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		jsonError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 
 	userID, err := utils.UserIDFromContext(r.Context())
-	fmt.Println("USERID = ", userID)
 	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		jsonError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
-	err = h.Service.UpdateProfile(userID, data.FirstName, data.LastName, data.Gender, data.Bio, data.BirthDate)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := h.Service.UpdateProfile(userID, data.FirstName, data.LastName, data.Gender, data.Bio, data.BirthDate); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]string{"message": "Profile updated successfully"})
+	jsonResponse(w, http.StatusOK, map[string]string{
+		"message": "profile updated successfully",
+	})
 }
 
-// Удаление профиля
+// ------------------------ DELETE PROFILE ------------------------
+
 func (h *ProfileHandler) DeleteProfile(w http.ResponseWriter, r *http.Request) {
-	userID := int64(1) // TODO: из JWT
-	err := h.Service.DeleteProfile(userID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if r.Method != http.MethodDelete {
+		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]string{"message": "Profile deleted"})
+
+	userID, err := utils.UserIDFromContext(r.Context())
+	if err != nil {
+		jsonError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	if err := h.Service.DeleteProfile(userID); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]string{"message": "profile deleted"})
 }
+
+// ------------------------ UPLOAD AVATAR ------------------------
 
 func (h *ProfileHandler) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
-	err := r.ParseMultipartForm(10 << 20) // до 10 МБ
-	if err != nil {
-		http.Error(w, "Could not parse form", http.StatusBadRequest)
+	// 10MB limit
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		jsonError(w, http.StatusBadRequest, "could not parse form")
 		return
 	}
 
 	file, handler, err := r.FormFile("avatar")
 	if err != nil {
-		http.Error(w, "Could not read file", http.StatusBadRequest)
+		jsonError(w, http.StatusBadRequest, "could not read file")
 		return
 	}
 	defer file.Close()
 
-	// ✅ Проверяем тип и размер файла
+	// validate image type + size
 	if err := utils.ValidateImage(file, handler); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	// TODO: заменить на ID из JWT
-	userID := int64(1)
+	userID, err := utils.UserIDFromContext(r.Context())
+	if err != nil {
+		jsonError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 
-	// Формируем путь
 	filename := fmt.Sprintf("user_%d_%s", userID, handler.Filename)
 	filePath := fmt.Sprintf("./uploads/users/%s", filename)
 
 	dst, err := os.Create(filePath)
 	if err != nil {
-		http.Error(w, "Could not save file", http.StatusInternalServerError)
+		jsonError(w, http.StatusInternalServerError, "could not save file")
 		return
 	}
 	defer dst.Close()
 
-	// Копируем содержимое файла
+	// Reset file reader before copying (ValidateImage moved pointer)
+	file.Seek(0, 0)
+
 	if _, err := io.Copy(dst, file); err != nil {
-		http.Error(w, "Failed to save image", http.StatusInternalServerError)
+		jsonError(w, http.StatusInternalServerError, "failed to save image")
 		return
 	}
 
-	publicPath := fmt.Sprintf("/uploads/users/%s", filename)
+	publicPath := "/uploads/users/" + filename
+
 	if err := h.Service.UpdateProfilePicture(userID, publicPath); err != nil {
-		http.Error(w, "Database update failed", http.StatusInternalServerError)
+		jsonError(w, http.StatusInternalServerError, "database update failed")
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]string{
-		"message": "Avatar uploaded successfully",
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"message": "avatar uploaded successfully",
 		"file":    publicPath,
 	})
 }

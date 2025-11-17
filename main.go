@@ -1,134 +1,177 @@
 package main
 
 import (
+	"context"
 	"database/sql"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strconv"
+	"syscall"
+	"time"
+
 	"dl/handlers"
 	"dl/middleware"
 	"dl/repositories"
 	"dl/services"
-	"log"
-	"net/http"
-	"time"
 
 	_ "github.com/lib/pq"
 )
 
-// func main() {
-// 	DB := InitDB()
-
-// 	authService := services.NewAuthService(DB)
-// 	authHandler := &handlers.AuthHandler{Service: authService}
-// 	profileService := &services.ProfileService{DB: DB}
-// 	profileHandler := &handlers.ProfileHandler{Service: profileService}
-
-// 	http.HandleFunc("/register", authHandler.Register)
-// 	http.HandleFunc("/login", authHandler.Login)
-// 	http.HandleFunc("/verify", authHandler.Verify)
-// 	http.HandleFunc("/forgot-password", authHandler.ForgotPassword)
-// 	http.HandleFunc("/reset-password", authHandler.ResetPassword)
-
-// 	http.HandleFunc("/profile", profileHandler.GetProfile)           //
-// 	http.HandleFunc("/update-profile", profileHandler.UpdateProfile) // PUT
-// 	http.HandleFunc("/delete-profile", profileHandler.DeleteProfile)
-
-// 	http.HandleFunc("/upload-avatar", profileHandler.UploadAvatar)
-// 	http.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
-
-// 	ratingService := &services.RatingService{DB: DB}
-// 	ratingHandler := &handlers.RatingHandler{Service: ratingService}
-
-// 	http.HandleFunc("/add-action", ratingHandler.AddAction)
-// 	http.HandleFunc("/user-actions", ratingHandler.GetUserActions)
-// 	http.HandleFunc("/leaderboard", ratingHandler.GetLeaderboard)
-
-// 	http.ListenAndServe(":8080", nil)
-// }
-
 func main() {
-	DB := InitDB()
+	// --- Конфигурация (env с fallback) ---
+	dbURL := getenv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/ecofoot?sslmode=disable")
+	addr := getenv("HTTP_ADDR", ":8080")
+	uploadsDir := getenv("UPLOADS_DIR", "./uploads")
+	newsIntervalMin := getenvInt("NEWS_INTERVAL_MIN", 30)
 
-	authService := services.NewAuthService(DB)
+	// --- Создать папку uploads если нет ---
+	if err := ensureDir(uploadsDir); err != nil {
+		log.Fatalf("failed to ensure uploads dir: %v", err)
+	}
+
+	// --- DB init ---
+	db := InitDB(dbURL)
+	defer db.Close()
+
+	// --- AUTH ---
+	userRepo := repositories.NewUserRepository(db)
+	authService := services.NewAuthService(userRepo)
 	authHandler := &handlers.AuthHandler{Service: authService}
-	profileService := &services.ProfileService{DB: DB}
+
+	// --- PROFILE ---
+	profileRepo := repositories.NewProfileRepository(db)
+	profileService := services.NewProfileService(profileRepo)
 	profileHandler := &handlers.ProfileHandler{Service: profileService}
-	ratingService := &services.RatingService{DB: DB}
+
+	// --- RATING ---
+	ratingRepo := repositories.NewRatingRepository(db)
+	ratingService := services.NewRatingService(ratingRepo)
 	ratingHandler := &handlers.RatingHandler{Service: ratingService}
 
-	// ✅ создаём новый маршрутизатор (mux)
+	// --- NEWS ---
+	newsRepo := repositories.NewNewsRepository(db)
+	newsService := services.NewNewsService(newsRepo)
+	newsHandler := handlers.NewNewsHandler(newsService)
+
+	// --- Router ---
 	mux := http.NewServeMux()
 
-	// ---------- Auth ----------
-	// mux.HandleFunc("/register", authHandler.Register)
-	// mux.HandleFunc("/login", authHandler.Login)
-	// mux.HandleFunc("/verify", authHandler.Verify)
-	// mux.HandleFunc("/forgot-password", authHandler.ForgotPassword)
-	// mux.HandleFunc("/reset-password", authHandler.ResetPassword)
-
-	// // ---------- Profile ----------
-	// mux.HandleFunc("/profile", profileHandler.GetProfile)
-	// mux.HandleFunc("/update-profile", profileHandler.UpdateProfile)
-	// mux.HandleFunc("/delete-profile", profileHandler.DeleteProfile)
-	// mux.HandleFunc("/upload-avatar", profileHandler.UploadAvatar)
-
-	// отдача файлов из папки uploads/
-	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
-
-	// ---------- Rating ----------
-	// mux.HandleFunc("/add-action", ratingHandler.AddAction)
-	// mux.HandleFunc("/user-actions", ratingHandler.GetUserActions)
-	// mux.HandleFunc("/leaderboard", ratingHandler.GetLeaderboard)
-
-	// // ✅ Оборачиваем всё в CORS middleware
-	// handler := middleware.EnableCORS(mux)
-
-	// // ✅ Запускаем сервер
-	// http.ListenAndServe(":8080", handler)
-	// mux := http.NewServeMux()
-
-	// Публичные маршруты
+	// Public auth routes
 	mux.HandleFunc("/register", authHandler.Register)
 	mux.HandleFunc("/login", authHandler.Login)
 	mux.HandleFunc("/verify", authHandler.Verify)
 	mux.HandleFunc("/forgot-password", authHandler.ForgotPassword)
 	mux.HandleFunc("/reset-password", authHandler.ResetPassword)
+	// TODO: add /refresh, /logout endpoints in AuthHandler (and implement refresh token storage)
 
-	// ✅ Защищённые маршруты (нужен токен)
-	mux.HandleFunc("/profile", middleware.JWTAuth(profileHandler.GetProfile))
-	mux.HandleFunc("/update-profile", middleware.JWTAuth(profileHandler.UpdateProfile))
-	mux.HandleFunc("/delete-profile", middleware.JWTAuth(profileHandler.DeleteProfile))
-	mux.HandleFunc("/upload-avatar", middleware.JWTAuth(profileHandler.UploadAvatar))
+	// Static uploads
+	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadsDir))))
 
-	mux.HandleFunc("/add-action", middleware.JWTAuth(ratingHandler.AddAction))
-	mux.HandleFunc("/user-actions", middleware.JWTAuth(ratingHandler.GetUserActions))
-	mux.HandleFunc("/leaderboard", middleware.JWTAuth(ratingHandler.GetLeaderboard))
+	// Protected profile routes (JWTAuth wrapper uses current signature: middleware.JWTAuth(next http.HandlerFunc) http.HandlerFunc)
+	mux.Handle("/profile", middleware.JWTAuth(http.HandlerFunc(profileHandler.GetProfile)))
+	mux.Handle("/update-profile", middleware.JWTAuth(http.HandlerFunc(profileHandler.UpdateProfile)))
+	mux.Handle("/delete-profile", middleware.JWTAuth(http.HandlerFunc(profileHandler.DeleteProfile)))
+	mux.Handle("/upload-avatar", middleware.JWTAuth(http.HandlerFunc(profileHandler.UploadAvatar)))
 
-	newsRepo := repositories.NewNewsRepository(DB)
-	newsService := services.NewNewsService(newsRepo)
-	newsHandler := handlers.NewNewsHandler(newsService)
+	mux.Handle("/add-action", middleware.JWTAuth(http.HandlerFunc(ratingHandler.AddAction)))
+	mux.Handle("/user-actions", middleware.JWTAuth(http.HandlerFunc(ratingHandler.GetUserActions)))
+	mux.Handle("/leaderboard", middleware.JWTAuth(http.HandlerFunc(ratingHandler.GetLeaderboard)))
 
-	go func() {
-		for {
-			newsService.UpdateNews()
-			time.Sleep(30 * time.Minute)
-		}
-	}()
+	// News (public)
 	mux.HandleFunc("/news", newsHandler.GetAll)
 
+	// Middleware chain: CORS -> (optionally Logging/Recovery) -> mux
 	handler := middleware.EnableCORS(mux)
-	http.ListenAndServe(":8080", handler)
+	// TODO: add middleware.Recovery(handler) and middleware.RequestLogger(handler) if добавите реализации
 
+	// --- Background job: обновление новостей по расписанию ---
+	go func() {
+		ticker := time.NewTicker(time.Duration(newsIntervalMin) * time.Minute)
+		defer ticker.Stop()
+
+		// Запуск сразу при старте
+		if err := newsService.UpdateNews(); err != nil {
+			log.Println("news update error:", err)
+		}
+
+		for range ticker.C {
+			if err := newsService.UpdateNews(); err != nil {
+				log.Println("news update error:", err)
+			}
+		}
+	}()
+
+	// --- HTTP Server с таймаутами и graceful shutdown ---
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      handler,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// Запускаем сервер в горутине
+	go func() {
+		log.Printf("Server listening on %s\n", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("ListenAndServe error: %v", err)
+		}
+	}()
+
+	// Graceful shutdown при SIGINT/SIGTERM
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	<-stop
+	log.Println("Shutting down server...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatalf("Server Shutdown Failed:%+v", err)
+	}
+
+	log.Println("Server exited properly")
 }
 
-func InitDB() *sql.DB {
-	connStr := "postgres://postgres:dana1234@localhost:5432/ecofoot?sslmode=disable"
+// InitDB теперь принимает строку подключения
+func InitDB(connStr string) *sql.DB {
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
-		log.Fatal("Failed to connect database:", err)
+		log.Fatalf("Failed to open DB: %v", err)
 	}
-
 	if err := db.Ping(); err != nil {
-		log.Fatal("Database ping error:", err)
+		log.Fatalf("Failed to ping DB: %v", err)
 	}
-
 	return db
+}
+
+// Помощники
+func getenv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func getenvInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if t, err := strconv.Atoi(v); err == nil {
+			return t
+		}
+	}
+	return fallback
+}
+
+func ensureDir(path string) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if err := os.MkdirAll(path, 0755); err != nil {
+			return err
+		}
+	}
+	// защитим от относительных путей и вернём абсолютный путь (по желанию)
+	_, err := filepath.Abs(path)
+	return err
 }

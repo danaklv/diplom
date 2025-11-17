@@ -1,6 +1,5 @@
 package middleware
 
-
 import (
 	"dl/utils"
 	"fmt"
@@ -8,21 +7,21 @@ import (
 	"strings"
 )
 
-// JWTAuth защищает маршруты и добавляет userID в контекст
-func JWTAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func JWTAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
 			http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
 			return
 		}
 
-		// Заголовок должен быть формата "Bearer <token>"
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-		if tokenString == authHeader {
+		if !strings.HasPrefix(authHeader, "Bearer ") {
 			http.Error(w, "Invalid token format", http.StatusUnauthorized)
 			return
 		}
+
+		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 
 		claims, err := utils.ParseToken(tokenString)
 		if err != nil {
@@ -30,10 +29,11 @@ func JWTAuth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// Добавляем userID в контекст запроса
+		// Добавляем userID в контекст
 		ctx := utils.ContextWithUserID(r.Context(), claims.UserID)
 		r = r.WithContext(ctx)
 
-		next(w, r)
-	}
+		// Передаём управление дальше
+		next.ServeHTTP(w, r)
+	})
 }
