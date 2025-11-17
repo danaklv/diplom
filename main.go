@@ -15,6 +15,7 @@ import (
 	"dl/handlers"
 	"dl/middleware"
 	"dl/repositories"
+	"dl/seeders"
 	"dl/services"
 
 	_ "github.com/lib/pq"
@@ -36,6 +37,10 @@ func main() {
 	db := InitDB(dbURL)
 	defer db.Close()
 
+	if err := seeders.RunAllSeeders(db); err != nil {
+		log.Fatal("Failed to run seeders: ", err)
+	}
+
 	// --- AUTH ---
 	userRepo := repositories.NewUserRepository(db)
 	authService := services.NewAuthService(userRepo)
@@ -56,6 +61,11 @@ func main() {
 	newsService := services.NewNewsService(newsRepo)
 	newsHandler := handlers.NewNewsHandler(newsService)
 
+	// -- ECO
+	ecoRepo := repositories.NewEcoRepository(db)
+	ecoService := services.NewEcoService(ecoRepo)
+	ecoHandler := handlers.EcoHandler{Service: ecoService}
+
 	// --- Router ---
 	mux := http.NewServeMux()
 
@@ -71,6 +81,7 @@ func main() {
 	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadsDir))))
 
 	// Protected profile routes (JWTAuth wrapper uses current signature: middleware.JWTAuth(next http.HandlerFunc) http.HandlerFunc)
+	mux.Handle("/eco", middleware.JWTAuth(http.HandlerFunc(ecoHandler.GetQuestions)))
 	mux.Handle("/profile", middleware.JWTAuth(http.HandlerFunc(profileHandler.GetProfile)))
 	mux.Handle("/update-profile", middleware.JWTAuth(http.HandlerFunc(profileHandler.UpdateProfile)))
 	mux.Handle("/delete-profile", middleware.JWTAuth(http.HandlerFunc(profileHandler.DeleteProfile)))
